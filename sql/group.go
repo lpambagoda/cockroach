@@ -178,9 +178,41 @@ func (n *groupNode) wrap(plan planNode) planNode {
 	if n == nil {
 		return plan
 	}
+	// Check to see if the requested ordering is compatible with the existing
+	// ordering.
+	existingOrdering, prefix := plan.Ordering()
+	if log.V(2) {
+		log.Infof("Group: existing=%d (%d) desired=%d", existingOrdering, prefix, n.desiredOrdering)
+	}
+
 	n.plan = plan
 	n.needGroup = true
 	return n
+}
+
+// isNotNullFilter adds as a "col IS NOT NULL" constraint to the expression if
+// the groupNode has a desired ordering on col.
+func (n *groupNode) isNotNullFilter(expr parser.Expr) parser.Expr {
+	if len(n.desiredOrdering) != 1 {
+		return expr
+	}
+	i := n.desiredOrdering[0]
+	if i < 0 {
+		i = -i
+	}
+	f := n.funcs[i-1]
+	isNotNull := &parser.ComparisonExpr{
+		Operator: parser.IsNot,
+		Left:     f.val.Exprs[0],
+		Right:    parser.DNull,
+	}
+	if expr == nil {
+		return isNotNull
+	}
+	return &parser.AndExpr{
+		Left:  expr,
+		Right: isNotNull,
+	}
 }
 
 // desiredAggregateOrdering computes the desired output ordering from the
